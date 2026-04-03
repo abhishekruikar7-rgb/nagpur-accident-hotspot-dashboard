@@ -1,59 +1,55 @@
-from flask import Flask, render_template_string
+from flask import Flask, render_template_string, jsonify
+from engine import RealTimeEngine
 import pandas as pd
 import folium
 import os
 
 app = Flask(__name__)
 
-@app.route("/")
-def dashboard():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+# Initialize the Real-Time Accident Simulation Engine
+engine = RealTimeEngine()
+engine.start()
 
-    
-    accidents_path = os.path.join(base_dir, "nagpur_accidents.csv")
-    hotspots_path = os.path.join(base_dir, "hotspots.csv")
-
-    accidents = pd.read_csv(accidents_path)
-    hotspots = pd.read_csv(hotspots_path)
-
-    # -------- STATS --------
-    total_accidents = len(accidents)
-
-    if "cluster" in hotspots.columns:
-        total_hotspots = hotspots["cluster"].nunique()
-    else:
-        total_hotspots = 0
-
-    high_severity = total_accidents // 3  # estimated
-
-    
+def get_live_map():
+    state = engine.get_state()
     nagpur_lat, nagpur_lon = 21.1458, 79.0882
-    m = folium.Map(location=[nagpur_lat, nagpur_lon], zoom_start=12)
-
-    if total_hotspots > 0:
-        hotspot_centers = (
-            hotspots
-            .groupby("cluster")[["latitude", "longitude"]]
-            .mean()
-            .reset_index()
-        )
-
-        for _, row in hotspot_centers.iterrows():
+    
+    # Initialize Map (Dark theme applied via CSS in template)
+    m = folium.Map(location=[nagpur_lat, nagpur_lon], zoom_start=12, control_scale=True)
+    
+    hotspots = pd.DataFrame(state["hotspots"])
+    if not hotspots.empty:
+        centers = hotspots.groupby("cluster")[["latitude", "longitude"]].mean().reset_index()
+        for _, row in centers.iterrows():
             folium.Marker(
                 location=[row["latitude"], row["longitude"]],
-                popup=f"Hotspot-{int(row['cluster'])}",
-                icon=folium.Icon(color="red", icon="warning")
+                popup=f"Live Hotspot-{int(row['cluster'])}",
+                icon=folium.Icon(color="red", icon="warning", prefix="fa")
             ).add_to(m)
-    else:
-        folium.Marker(
-            location=[nagpur_lat, nagpur_lon],
-            popup="No hotspots detected",
-            icon=folium.Icon(color="blue")
+            
+    # Add most recent activity as micro-dots
+    for pt in state["recent_points"][-30:]:
+        folium.CircleMarker(
+            location=[pt["latitude"], pt["longitude"]],
+            radius=3,
+            color="#ff4757",
+            fill=True,
+            fill_opacity=0.6,
+            weight=1
         ).add_to(m)
+        
+    return m._repr_html_()
 
-    map_html = m._repr_html_()
-
-    # -------- SAFETY RECOMMENDATIONS --------
+@app.route("/api/data")
+def api_data():
+    state = engine.get_state()
+    total = state["total_count"]
+    hotspots_data = pd.DataFrame(state["hotspots"])
+    total_hotspots = hotspots_data["cluster"].nunique() if not hotspots_data.empty else 0
+    
+    # Calculate Dynamic Risk Index
+    risk_index = (total_hotspots * 1.5) if total > 0 else 0
+    
     recommendation_text = [
         "Install speed breakers at accident-prone locations",
         "Increase traffic police presence during peak hours",
@@ -63,157 +59,134 @@ def dashboard():
         "Conduct road safety awareness campaigns",
         "Repair damaged roads and potholes"
     ]
-
-    recommendations = pd.DataFrame({
+    
+    recs = pd.DataFrame({
         "Hotspot ID": [f"Hotspot-{i+1}" for i in range(min(total_hotspots, 7))],
         "Safety Recommendation": recommendation_text[:min(total_hotspots, 7)]
     })
 
-    # -------- HTML --------
+    return jsonify({
+        "total_accidents": total,
+        "total_hotspots": total_hotspots,
+        "risk_index": f"{risk_index:.1f}",
+        "map_html": get_live_map(),
+        "rec_table": recs.to_html(index=False, classes='table')
+    })
+
+@app.route("/")
+def dashboard():
     return render_template_string("""
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nagpur Accident Intelligence Dashboard</title>
+    <title>LIVE | Nagpur Accident Intelligence</title>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
             --primary: #ff4757;
-            --secondary: #2f3542;
+            --success: #2ed573;
             --bg: #0f172a;
             --card-bg: rgba(30, 41, 59, 0.7);
             --text: #f1f2f6;
-            --accent: #5352ed;
         }
 
         body {
             font-family: 'Plus Jakarta Sans', sans-serif;
-            background: radial-gradient(circle at top right, #1e293b, #0f172a);
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
             color: var(--text);
             margin: 0;
-            padding: 40px;
+            padding: 20px;
             min-height: 100vh;
         }
 
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
+        .container { max-width: 1300px; margin: 0 auto; }
 
         .header {
-            text-align: left;
-            margin-bottom: 40px;
-            border-left: 5px solid var(--primary);
-            padding-left: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: var(--card-bg);
+            border-radius: 20px;
+            border: 1px solid rgba(255,255,255,0.05);
         }
 
-        h1 {
-            font-size: 2.5rem;
-            margin: 0;
-            letter-spacing: -1px;
-            background: linear-gradient(90deg, #fff, #94a3b8);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+        .live-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.9rem;
+            color: var(--success);
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .pulse {
+            width: 10px;
+            height: 10px;
+            background: var(--success);
+            border-radius: 50%;
+            box-shadow: 0 0 0 rgba(46, 213, 115, 0.4);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(46, 213, 115, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(46, 213, 115, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(46, 213, 115, 0); }
         }
 
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 20px;
-            margin-bottom: 40px;
+            margin-bottom: 30px;
         }
 
         .card {
             background: var(--card-bg);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
             padding: 25px;
-            border-radius: 20px;
-            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        }
-
-        .card:hover {
-            transform: translateY(-5px);
-            border-color: var(--primary);
-        }
-
-        .card-label {
-            color: #94a3b8;
-            font-size: 0.9rem;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 10px;
-        }
-
-        .card-value {
-            font-size: 2.5rem;
-            font-weight: 700;
-            color: #fff;
-        }
-
-        .map-section {
-            background: var(--card-bg);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 30px;
             border-radius: 24px;
-            margin-bottom: 40px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255,255,255,0.1);
         }
 
-        .section-title {
-            font-size: 1.5rem;
-            margin-bottom: 25px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
+        .card-label { color: #94a3b8; font-size: 0.85rem; margin-bottom: 8px; }
+        .card-value { font-size: 2.2rem; font-weight: 700; }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+        }
+
+        .map-section, .rec-section {
+            background: var(--card-bg);
+            padding: 25px;
+            border-radius: 24px;
+            border: 1px solid rgba(255,255,255,0.1);
         }
 
         .map-container {
+            height: 500px;
             border-radius: 16px;
             overflow: hidden;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: #111;
         }
 
-        .rec-section {
-            background: var(--card-bg);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 30px;
-            border-radius: 24px;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: separate;
-            border-spacing: 0 8px;
-        }
-
-        th {
-            text-align: left;
-            padding: 15px;
-            color: #94a3b8;
-            font-weight: 600;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        td {
-            padding: 15px;
-            background: rgba(255, 255, 255, 0.03);
-        }
-
-        tr td:first-child { border-radius: 12px 0 0 12px; font-weight: 600; color: var(--primary); }
+        table { width: 100%; border-collapse: separate; border-spacing: 0 10px; }
+        td { padding: 15px; background: rgba(255,255,255,0.03); font-size: 0.9rem; }
+        tr td:first-child { border-radius: 12px 0 0 12px; color: var(--primary); font-weight: 700; }
         tr td:last-child { border-radius: 0 12px 12px 0; }
 
-        tr:hover td {
-            background: rgba(255, 255, 255, 0.07);
-        }
+        /* Dark Mode Map Fix */
+        .folium-map { filter: invert(0.9) hue-rotate(180deg) brightness(0.7); }
 
-        /* Folium Map adjustments for Dark Mode */
-        .folium-map {
-            filter: grayscale(1) invert(0.9) hue-rotate(180deg) brightness(0.8);
+        @media (max-width: 1000px) {
+            .main-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -221,49 +194,80 @@ def dashboard():
 
 <div class="container">
     <div class="header">
-        <h1>Nagpur Accident Intelligence Dashboard</h1>
-        <p style="color: #64748b; margin-top: 10px;">Real-time analysis and hotspot detection for urban road safety</p>
+        <div>
+            <h1 style="margin:0; font-size: 1.8rem;">Nagpur Accident Intelligence</h1>
+            <p style="margin:5px 0 0 0; color: #64748b;">Simulating Real-Time Incident Data Clustering</p>
+        </div>
+        <div class="live-indicator">
+            <div class="pulse"></div> LIVE FEED ACTIVE
+        </div>
     </div>
 
     <div class="stats-grid">
         <div class="card">
-            <div class="card-label">Total Accidents</div>
-            <div class="card-value">{{ total_accidents }}</div>
+            <div class="card-label">Total Simulated Incidents</div>
+            <div class="card-value" id="val-accidents">...</div>
         </div>
         <div class="card">
-            <div class="card-label">Hotspots Detected</div>
-            <div class="card-value">{{ total_hotspots }}</div>
+            <div class="card-label">Identified Hotspots</div>
+            <div class="card-value" id="val-hotspots">...</div>
         </div>
         <div class="card">
-            <div class="card-label">Risk Index</div>
-            <div class="card-value" style="color: var(--primary);">{{ "%.1f"|format(high_severity / total_accidents * 10) }}</div>
+            <div class="card-label">Current Risk Index</div>
+            <div class="card-value" id="val-risk" style="color: var(--primary);">...</div>
         </div>
     </div>
 
-    <div class="map-section">
-        <div class="section-title">🗺️ Spatial Distribution & Hotspot Mapping</div>
-        <div class="map-container">
-            {{ map_html | safe }}
+    <div class="main-grid">
+        <div class="map-section">
+            <h3 style="margin-top:0">🗺️ Real-Time Spatial Analysis</h3>
+            <div id="map-container" class="map-container">
+                <!-- Map injected here -->
+                <p style="text-align:center; padding-top:200px; color:#64748b;">Initializing LIVE Map View...</p>
+            </div>
         </div>
-    </div>
-
-    <div class="rec-section">
-        <div class="section-title">🚨 AI-Generated Safety Recommendations</div>
-        {{ rec_table | safe }}
+        
+        <div class="rec-section">
+            <h3 style="margin-top:0">🚨 Active Safety Directives</h3>
+            <div id="rec-container">
+                <!-- Recs injected here -->
+            </div>
+        </div>
     </div>
 </div>
 
+<script>
+    async function updateDashboard() {
+        try {
+            const res = await fetch('/api/data');
+            const data = await res.json();
+            
+            document.getElementById('val-accidents').innerText = data.total_accidents;
+            document.getElementById('val-hotspots').innerText = data.total_hotspots;
+            document.getElementById('val-risk').innerText = data.risk_index;
+            document.getElementById('rec-container').innerHTML = data.rec_table;
+            
+            // Map injection - simple innerHTML replacement
+            // Note: Replacing the entire iframe might cause a slight blink
+            const mapContainer = document.getElementById('map-container');
+            mapContainer.innerHTML = data.map_html;
+            
+        } catch (e) {
+            console.error("Dashboard update failed:", e);
+        }
+    }
+
+    // Initial update
+    updateDashboard();
+    
+    // Poll every 5 seconds
+    setInterval(updateDashboard, 5000);
+</script>
+
 </body>
 </html>
-""",
-        total_accidents=total_accidents,
-        total_hotspots=total_hotspots,
-        high_severity=high_severity,
-        map_html=map_html,
-        rec_table=recommendations.to_html(index=False, classes='table')
-    )
-
+    """)
 
 if __name__ == "__main__":
-    app.run(host="localhost", port=5000, debug=True)
+    app.run(host="localhost", port=5000, debug=False)
 
