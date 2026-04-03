@@ -1,5 +1,7 @@
 # 🚦 Nagpur Accident Intelligence Dashboard
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/abhishekruikar7-rgb/nagpur-accident-hotspot-dashboard)
+
 A state-of-the-art predictive analytics dashboard designed to visualize and mitigate road accident hotspots in Nagpur. This project leverages clustering algorithms to identify high-risk zones and provides AI-tailored safety recommendations for urban road safety.
 
 ## 💎 Premium Features

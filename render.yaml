@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: nagpur-accident-hotspot-dashboard
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
