@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+*.html
+!app.py
+!index.html
+hotspots.csv
+nagpur_accidents.csv
+nagpur_hotspot_centers.csv
+nagpur_hotspots.html
