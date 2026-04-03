@@ -1,5 +1,5 @@
-flask
+﻿flask
 pandas
 folium
+scikit-learn
 gunicorn
-
