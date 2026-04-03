@@ -47,8 +47,8 @@ def api_data():
     hotspots_data = pd.DataFrame(state["hotspots"])
     total_hotspots = hotspots_data["cluster"].nunique() if not hotspots_data.empty else 0
     
-    # Calculate Dynamic Risk Index
-    risk_index = (total_hotspots * 1.5) if total > 0 else 0
+    # Calculate Dynamic Risk Index (Base risk + cluster intensity)
+    risk_index = (total_hotspots * 1.5 + total / 50) if total > 0 else 0
     
     recommendation_text = [
         "Install speed breakers at accident-prone locations",

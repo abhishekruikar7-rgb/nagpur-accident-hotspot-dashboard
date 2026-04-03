@@ -39,22 +39,20 @@ class RealTimeEngine:
         df = pd.DataFrame(list(self.accidents))
         coords = df[['latitude', 'longitude']]
         
-        # EPS=0.0015 is roughly 150-200 meters. Min_samples=5 forces distinct hotspots.
-        db = DBSCAN(eps=0.0015, min_samples=5).fit(coords)
+        # INCREASED eps (0.002) and DECREASED min_samples (3) for easier clustering
+        db = DBSCAN(eps=0.002, min_samples=3).fit(coords)
         df['cluster'] = db.labels_
         
-        # Update current hotspots (excluding noise labels -1)
         self.hotspots = df[df['cluster'] != -1].copy()
 
     def _shift_patterns(self):
-        # Slowly shift risk weights to simulate changing traffic patterns over time
         for zone in self.zones:
             change = random.uniform(-0.1, 0.1)
             zone["risk"] = max(0.1, min(1.0, zone["risk"] + change))
 
     def _run_loop(self):
-        # Pre-populate with base clusters for immediate visualization
-        for _ in range(150):
+        # INCREASED pre-population (200) to ensure immediate hotspots
+        for _ in range(200):
             self.accidents.append(self._generate_point())
         self._update_clusters()
 
